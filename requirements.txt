@@ -1,0 +1,28 @@
+streamlit>=1.35.0
+yfinance>=0.2.40
+pandas>=2.1.0
+numpy>=1.26.0
+scikit-learn>=1.4.0
+plotly>=5.22.0
+feedparser>=6.0.0
+vaderSentiment>=3.3.2
+sqlalchemy>=2.0.0
+kaleido>=0.2.1
+fastapi
+uvicorn[standard]
+requests
+PyJWT>=2.8.0
+google-auth>=2.29.0
+
+# ---------------------------------------------------------------------------
+# Optional: Advanced ML dependencies (commented — not required for current build)
+# All new models (TCN, DQL, XGB-Optuna, FracDiff, Kalman) use only numpy/sklearn.
+# Uncomment below for production native implementations with higher performance:
+# ---------------------------------------------------------------------------
+# xgboost>=2.0.0        # Native XGBoost (currently using sklearn GradientBoosting)
+# lightgbm>=4.0.0       # LightGBM — faster GBM for large datasets
+# optuna>=3.6.0         # Bayesian hyperparameter search (replaces random search)
+# PyWavelets>=1.6.0     # Wavelet transforms for de-noising features
+# scipy>=1.12.0         # Advanced signal processing (Kalman, spectral analysis)
+# torch>=2.0.0          # PyTorch — for native TCN/transformer implementations
+# statsmodels>=0.14.0   # ARIMA/GARCH for volatility regime modeling
