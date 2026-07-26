@@ -481,6 +481,9 @@ def fetch_ohlcv(symbol: str, period: str = "10y") -> pd.DataFrame:
     # Keep only OHLCV, drop Dividends/Stock Splits if present
     cols_keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
     df = df[cols_keep].copy()
+    df = df.ffill().bfill()
+    if "Close" in df.columns:
+        df = df[df["Close"] > 0]
     df.index = pd.to_datetime(df.index)
     df.index = df.index.tz_localize(None)  # Remove timezone for consistency
     return df

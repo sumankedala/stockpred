@@ -854,7 +854,9 @@ def api_get_chart_data(symbol: str, range: str = "1M", user: dict = Depends(get_
             
             df = fetch_ohlcv(resolved, period=period)
             if not df.empty:
-                df = df.fillna(0)
+                df = df.ffill().bfill()
+                if "Close" in df.columns:
+                    df = df[df["Close"] > 0]
                 df.index = pd.to_datetime(df.index)
                 df.index = df.index.tz_localize(None)
                 
