@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: stockpred
+    env: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ENV
+        value: production
+      - key: PORT
+        value: 10000
