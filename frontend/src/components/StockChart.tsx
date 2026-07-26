@@ -61,6 +61,17 @@ export const StockChart: React.FC<StockChartProps> = ({
     }));
     
     if (showForecast && forecastData && forecastData.length > 0) {
+      // Smooth transition: attach starting forecast point to the last historical point
+      if (chartData.length > 0) {
+        const lastIdx = chartData.length - 1;
+        chartData[lastIdx] = {
+          ...chartData[lastIdx],
+          forecast: chartData[lastIdx].historical,
+          upper: chartData[lastIdx].historical,
+          lower: chartData[lastIdx].historical,
+        };
+      }
+      
       const formattedForecast = forecastData.map(pt => ({
         time: pt.time,
         forecast: pt.forecast,
@@ -68,18 +79,6 @@ export const StockChart: React.FC<StockChartProps> = ({
         lower: pt.lower,
         type: 'forecast',
       }));
-      
-      // Connect the last historical point with the first forecast point
-      if (data.length > 0) {
-        const lastHist = data[data.length - 1];
-        formattedForecast.unshift({
-          time: lastHist.time,
-          forecast: lastHist.close,
-          upper: lastHist.close,
-          lower: lastHist.close,
-          type: 'forecast',
-        });
-      }
       
       chartData = [...chartData, ...formattedForecast];
     }
