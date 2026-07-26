@@ -295,7 +295,7 @@ export const StockChart: React.FC<StockChartProps> = ({
                 dataKey={['lower', 'upper'] as any}
                 stroke="none"
                 fill={modelColor}
-                fillOpacity={0.08}
+                fillOpacity={0.12}
                 connectNulls
               />
               {/* Historical area line */}
@@ -310,17 +310,15 @@ export const StockChart: React.FC<StockChartProps> = ({
                 activeDot={{ r: 5, strokeWidth: 0 }}
                 connectNulls
               />
-              {/* Forecast area line (styled with selected model theme color) */}
-              <Area
+              {/* Forecast prediction line (Dashed Line — no vertical area fill drop) */}
+              <Line
                 type="monotone"
                 dataKey="forecast"
                 stroke={modelColor}
-                strokeWidth={2.5}
-                strokeDasharray="4 4"
-                fillOpacity={1}
-                fill={`url(#colorForecast_${selectedModel})`}
-                dot={false}
-                activeDot={{ r: 5, strokeWidth: 0 }}
+                strokeWidth={3}
+                strokeDasharray="6 4"
+                dot={{ r: 3.5, fill: modelColor, strokeWidth: 0 }}
+                activeDot={{ r: 6, stroke: modelColor, strokeWidth: 2, fill: '#090D16' }}
                 connectNulls
               />
             </AreaChart>
