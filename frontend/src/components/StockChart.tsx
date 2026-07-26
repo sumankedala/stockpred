@@ -310,13 +310,15 @@ export const StockChart: React.FC<StockChartProps> = ({
                 activeDot={{ r: 5, strokeWidth: 0 }}
                 connectNulls
               />
-              {/* Forecast prediction line (Dashed Line — no vertical area fill drop) */}
-              <Line
+              {/* Forecast prediction line (Dashed Area line with zero fill) */}
+              <Area
                 type="monotone"
                 dataKey="forecast"
                 stroke={modelColor}
                 strokeWidth={3}
                 strokeDasharray="6 4"
+                fill="none"
+                fillOpacity={0}
                 dot={{ r: 3.5, fill: modelColor, strokeWidth: 0 }}
                 activeDot={{ r: 6, stroke: modelColor, strokeWidth: 2, fill: '#090D16' }}
                 connectNulls
