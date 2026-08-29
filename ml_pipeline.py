@@ -18,10 +18,50 @@ Metrics: MAPE, MDA (Mean Directional Accuracy).
 
 import numpy as np
 import pandas as pd
-import streamlit as st
+import threading
+from cachetools import LRUCache
+from functools import wraps
+
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
+
+def _make_hashable(arg):
+    if isinstance(arg, (pd.DataFrame, pd.Series, pd.Index)):
+        return (len(arg), str(arg.index[-1]) if hasattr(arg, 'index') and len(arg) > 0 else "")
+    if isinstance(arg, (list, tuple)):
+        return tuple(_make_hashable(x) for x in arg)
+    if isinstance(arg, dict):
+        return tuple(sorted((k, _make_hashable(v)) for k, v in arg.items()))
+    return arg
+
+def _resource_cache(fn):
+    """Thread-safe LRU cache for heavy objects like trained ML models."""
+    cache: LRUCache = LRUCache(maxsize=64)
+    lock = threading.Lock()
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            hashable_args = tuple(_make_hashable(a) for a in args)
+            hashable_kwargs = tuple(sorted((k, _make_hashable(v)) for k, v in kwargs.items()))
+            key = (hashable_args, hashable_kwargs)
+        except Exception:
+            key = None
+
+        if key is not None:
+            with lock:
+                if key in cache:
+                    return cache[key]
+
+        result = fn(*args, **kwargs)
+
+        if key is not None:
+            with lock:
+                cache[key] = result
+
+        return result
+    return wrapper
+
 
 # ---------------------------------------------------------------------------
 # Horizon Mapping: user label → trading days + minimum history required
@@ -371,7 +411,7 @@ def get_model_instance(model_type: str):
 # ---------------------------------------------------------------------------
 # Ensemble Training + Walk-Forward Validation
 # ---------------------------------------------------------------------------
-@st.cache_resource(show_spinner=False)
+@_resource_cache
 def train_and_validate(
     _X: pd.DataFrame,
     _y: pd.Series,

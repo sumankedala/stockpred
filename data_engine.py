@@ -8,7 +8,52 @@ Provides:
   - Sector ETF mapping for momentum calculations
 """
 
-import streamlit as st
+import os
+import threading
+from cachetools import TTLCache
+from functools import wraps
+
+def _make_hashable(arg):
+    if isinstance(arg, (pd.DataFrame, pd.Series, pd.Index)):
+        return (len(arg), str(arg.index[-1]) if hasattr(arg, 'index') and len(arg) > 0 else "")
+    if isinstance(arg, (list, tuple)):
+        return tuple(_make_hashable(x) for x in arg)
+    if isinstance(arg, dict):
+        return tuple(sorted((k, _make_hashable(v)) for k, v in arg.items()))
+    return arg
+
+# ---------------------------------------------------------------------------
+# FastAPI-compatible TTL cache decorator (replaces @st.cache_data)
+# ---------------------------------------------------------------------------
+def _ttl_cache(ttl: int):
+    """Thread-safe TTL cache decorator compatible with FastAPI (no Streamlit needed)."""
+    def decorator(fn):
+        cache: TTLCache = TTLCache(maxsize=256, ttl=ttl)
+        lock = threading.Lock()
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                hashable_args = tuple(_make_hashable(a) for a in args)
+                hashable_kwargs = tuple(sorted((k, _make_hashable(v)) for k, v in kwargs.items()))
+                key = (hashable_args, hashable_kwargs)
+            except Exception:
+                key = None
+
+            if key is not None:
+                with lock:
+                    if key in cache:
+                        return cache[key]
+
+            result = fn(*args, **kwargs)
+
+            if key is not None:
+                with lock:
+                    cache[key] = result
+
+            return result
+        return wrapper
+    return decorator
+
 import yfinance as yf
 import pandas as pd
 import socket
@@ -146,7 +191,7 @@ def _validate_ticker(symbol: str) -> bool:
         return False
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@_ttl_cache(ttl=3600)
 def resolve_symbol(query: str) -> str | None:
     """
     Resolve a user query (company name or ticker) to a valid yfinance symbol.
@@ -426,7 +471,7 @@ def _generate_mock_fundamentals(symbol: str) -> dict:
 # ---------------------------------------------------------------------------
 # OHLCV Data
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=900, show_spinner=False)
+@_ttl_cache(ttl=900)
 def fetch_ohlcv(symbol: str, period: str = "10y") -> pd.DataFrame:
     """
     Fetch daily OHLCV data for a symbol.
@@ -440,43 +485,49 @@ def fetch_ohlcv(symbol: str, period: str = "10y") -> pd.DataFrame:
             pass
         
     if df.empty or len(df) == 0:
-        import numpy as np
-        from datetime import datetime
-        
-        upper_symbol = symbol.upper()
-        h = abs(hash(upper_symbol))
-        
-        days = 30
-        if period == "5y" or period == "10y" or period == "max":
-            days = 5 * 365
-        elif period == "1y" or period == "2y":
-            days = 365
-        elif period == "6mo":
-            days = 180
-        elif period == "1mo":
+        # Only generate synthetic fallback data when explicitly enabled.
+        # On the deployed server (Render) this env var should NOT be set,
+        # so an empty DataFrame is returned and the caller gets a proper error.
+        if os.environ.get("ALLOW_MOCK_DATA", "").lower() == "true":
+            import numpy as np
+            from datetime import datetime
+            
+            upper_symbol = symbol.upper()
+            h = abs(hash(upper_symbol))
+            
             days = 30
-        elif period == "5d":
-            days = 5
+            if period == "5y" or period == "10y" or period == "max":
+                days = 5 * 365
+            elif period == "1y" or period == "2y":
+                days = 365
+            elif period == "6mo":
+                days = 180
+            elif period == "1mo":
+                days = 30
+            elif period == "5d":
+                days = 5
+                
+            dates = pd.bdate_range(end=datetime.now(), periods=days)
             
-        dates = pd.bdate_range(end=datetime.now(), periods=days)
-        
-        if upper_symbol in _MOCK_FUNDAMENTALS:
-            curr_price = _MOCK_FUNDAMENTALS[upper_symbol]["currentPrice"]
-        else:
-            curr_price = 10.0 + (h % 300)
+            if upper_symbol in _MOCK_FUNDAMENTALS:
+                curr_price = _MOCK_FUNDAMENTALS[upper_symbol]["currentPrice"]
+            else:
+                curr_price = 10.0 + (h % 300)
+                
+            np.random.seed(h % 1000)
+            returns = np.random.normal(0.0003, 0.015, len(dates))
+            price_series = curr_price * np.exp(np.cumsum(returns) - np.sum(returns))
             
-        np.random.seed(h % 1000)
-        returns = np.random.normal(0.0003, 0.015, len(dates))
-        price_series = curr_price * np.exp(np.cumsum(returns) - np.sum(returns))
-        
-        df = pd.DataFrame(index=dates)
-        df["Close"] = price_series
-        df["Open"] = price_series * (1.0 + np.random.normal(0, 0.005, len(dates)))
-        df["High"] = df[["Open", "Close"]].max(axis=1) * (1.0 + np.random.uniform(0, 0.01, len(dates)))
-        df["Low"] = df[["Open", "Close"]].min(axis=1) * (1.0 - np.random.uniform(0, 0.01, len(dates)))
-        df["Volume"] = np.random.randint(1000000, 10000000, len(dates))
-        df.index.name = "Date"
-        return df
+            df = pd.DataFrame(index=dates)
+            df["Close"] = price_series
+            df["Open"] = price_series * (1.0 + np.random.normal(0, 0.005, len(dates)))
+            df["High"] = df[["Open", "Close"]].max(axis=1) * (1.0 + np.random.uniform(0, 0.01, len(dates)))
+            df["Low"] = df[["Open", "Close"]].min(axis=1) * (1.0 - np.random.uniform(0, 0.01, len(dates)))
+            df["Volume"] = np.random.randint(1000000, 10000000, len(dates))
+            df.index.name = "Date"
+            return df
+        return pd.DataFrame()
+
 
     # Keep only OHLCV, drop Dividends/Stock Splits if present
     cols_keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
@@ -492,7 +543,7 @@ def fetch_ohlcv(symbol: str, period: str = "10y") -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Fundamentals
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=900, show_spinner=False)
+@_ttl_cache(ttl=900)
 def fetch_fundamentals(symbol: str) -> dict:
     """
     Extract key fundamental metrics from yfinance ticker.info.
@@ -546,7 +597,7 @@ def fetch_fundamentals(symbol: str) -> dict:
 # ---------------------------------------------------------------------------
 # Sector ETF
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=3600, show_spinner=False)
+@_ttl_cache(ttl=3600)
 def get_sector_etf(symbol: str) -> str:
     """Map a ticker's sector to the corresponding SPDR sector ETF."""
     sector = ""
@@ -567,7 +618,7 @@ def get_sector_etf(symbol: str) -> str:
     return _SECTOR_ETF_MAP.get(sector, _DEFAULT_SECTOR_ETF)
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@_ttl_cache(ttl=900)
 def fetch_sector_ohlcv(sector_etf: str, period: str = "2y") -> pd.DataFrame:
     """Fetch OHLCV for a sector ETF (used for Sector_Momentum calculation)."""
     return fetch_ohlcv(sector_etf, period=period)
@@ -577,7 +628,7 @@ def fetch_sector_ohlcv(sector_etf: str, period: str = "2y") -> pd.DataFrame:
 # Macro-Regime Data Layer (NEW)
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@_ttl_cache(ttl=3600)
 def fetch_treasury_yield_spread(period: str = "2y") -> pd.Series:
     """
     Fetch the 10Y - 2Y US Treasury yield curve spread.
@@ -617,7 +668,7 @@ def fetch_treasury_yield_spread(period: str = "2y") -> pd.Series:
     return spread
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@_ttl_cache(ttl=3600)
 def fetch_macro_regime_features(_date_index: pd.DatetimeIndex, period: str = "2y") -> pd.DataFrame:
     """
     Build a DataFrame of macro-regime features aligned to a given _date_index.

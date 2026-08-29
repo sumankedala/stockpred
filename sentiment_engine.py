@@ -11,7 +11,31 @@ import re
 from datetime import datetime
 
 import feedparser
-import streamlit as st
+import threading
+from cachetools import TTLCache
+from functools import wraps
+
+# ---------------------------------------------------------------------------
+# FastAPI-compatible TTL cache (replaces @st.cache_data)
+# ---------------------------------------------------------------------------
+def _ttl_cache(ttl: int):
+    """Thread-safe TTL cache decorator compatible with FastAPI."""
+    def decorator(fn):
+        cache: TTLCache = TTLCache(maxsize=128, ttl=ttl)
+        lock = threading.Lock()
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            key = (args, tuple(sorted(kwargs.items())))
+            with lock:
+                if key in cache:
+                    return cache[key]
+            result = fn(*args, **kwargs)
+            with lock:
+                cache[key] = result
+            return result
+        return wrapper
+    return decorator
+
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 # ---------------------------------------------------------------------------
@@ -179,7 +203,7 @@ MACRO_KEYWORDS: dict[str, dict] = {
 # ---------------------------------------------------------------------------
 # RSS Feed Fetching
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=600, show_spinner=False)
+@_ttl_cache(ttl=600)
 def fetch_news_headlines(query: str, max_items: int = 15) -> list[dict]:
     """
     Fetch news headlines from Google News RSS for the given query.
@@ -256,7 +280,7 @@ def get_ticker_sentiment(symbol: str) -> float:
 # ---------------------------------------------------------------------------
 # Macro Catalyst Scanner
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=600, show_spinner=False)
+@_ttl_cache(ttl=600)
 def scan_macro_catalysts() -> list[dict]:
     """
     Scan macro/political news feeds for keyword-matched catalysts.

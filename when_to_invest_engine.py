@@ -85,6 +85,14 @@ def compute_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df['Volume_MA'] = df['Volume']
     df['Volume_MA'] = df['Volume_MA'].fillna(df['Volume']).replace(0, 1)
     df['Volume_Ratio'] = df['Volume'] / df['Volume_MA']
+
+    # 6. 50-day and 200-day Simple Moving Averages & Golden Cross
+    df['SMA50'] = df['Close'].rolling(window=min(50, n)).mean().fillna(df['Close'])
+    df['SMA200'] = df['Close'].rolling(window=min(200, n)).mean().fillna(df['Close'])
+    df['Golden_Cross'] = (df['SMA50'] >= df['SMA200']).astype(int)
+    
+    # 7. Bollinger Bandwidth (Squeeze indicator)
+    df['Band_Width'] = ((df['Upper_Band'] - df['Lower_Band']) / (df['Middle_Band'] + 1e-9)).fillna(0)
     
     # Replace any nan/inf with safe values
     df = df.replace([np.inf, -np.inf], np.nan).fillna(0)

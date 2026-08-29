@@ -10,7 +10,31 @@ Provides:
 
 import numpy as np
 import pandas as pd
-import streamlit as st
+import threading
+from cachetools import TTLCache
+from functools import wraps
+
+# ---------------------------------------------------------------------------
+# FastAPI-compatible TTL cache (replaces @st.cache_data)
+# ---------------------------------------------------------------------------
+def _ttl_cache(ttl: int):
+    """Thread-safe TTL cache decorator compatible with FastAPI."""
+    def decorator(fn):
+        cache: TTLCache = TTLCache(maxsize=64, ttl=ttl)
+        lock = threading.Lock()
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            key = (args, tuple(sorted(kwargs.items())))
+            with lock:
+                if key in cache:
+                    return cache[key]
+            result = fn(*args, **kwargs)
+            with lock:
+                cache[key] = result
+            return result
+        return wrapper
+    return decorator
+
 
 from data_engine import DOW_30, fetch_fundamentals, fetch_ohlcv
 from feature_engineering import _compute_rsi
@@ -44,7 +68,7 @@ def _rsi_value_score(rsi: float) -> float:
 # ---------------------------------------------------------------------------
 # Alpha Screener
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=900, show_spinner=False)
+@_ttl_cache(ttl=900)
 def run_alpha_screener(
     tickers: list[str] | None = None,
     top_n: int = 15,
@@ -169,7 +193,7 @@ def run_alpha_screener(
 # ---------------------------------------------------------------------------
 # Macro Catalyst Matrix (delegates to sentiment_engine)
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=600, show_spinner=False)
+@_ttl_cache(ttl=600)
 def run_macro_catalyst_matrix() -> pd.DataFrame:
     """
     Scan macro/political news and return a structured catalyst DataFrame.

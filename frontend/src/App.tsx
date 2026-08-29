@@ -4,14 +4,17 @@ import {
   Search, Plus, Trash2, TrendingUp, TrendingDown, RefreshCw,
   Database, Cpu, Globe, Send, LineChart, Sparkles, Clock,
   Info, BarChart2, MessageSquare, ChevronRight, X, User,
-  Sliders, Users, Lock, Settings, Key
+  Sliders, Users, Lock, Settings, Key, Activity
+
 } from 'lucide-react';
 import { StockChart } from './components/StockChart';
 import { MasterAnalysisChart } from './components/MasterAnalysisChart';
 import { ShouldIInvestTab } from './components/ShouldIInvestTab';
 import { WhenToInvestTab } from './components/WhenToInvestTab';
+import { NasdaqSignalsTab } from './components/NasdaqSignalsTab';
 
 interface WatchlistItem {
+
   symbol: string;
   name: string;
   price: number;
@@ -189,7 +192,8 @@ export default function App() {
   const [userKeysSuccessMsg, setUserKeysSuccessMsg] = useState<string>('');
 
   // View States
-  const [viewMode, setViewMode] = useState<'deck' | 'master' | 'invest' | 'admin' | 'when_to_invest'>('deck');
+  const [viewMode, setViewMode] = useState<'deck' | 'master' | 'invest' | 'admin' | 'when_to_invest' | 'nasdaq_signals'>('deck');
+
 
   // Dashboard Data States
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
@@ -839,14 +843,14 @@ export default function App() {
         { symbol: 'TATAMOTORS.NS', name: 'Tata Motors', price: 980.40, changePercent: 3.40 }
       ]
       : [
-        { symbol: 'AAPL', name: 'Apple Inc.', price: 172.54, changePercent: 1.45 },
-        { symbol: 'MSFT', name: 'Microsoft Corp.', price: 415.60, changePercent: -0.82 },
-        { symbol: 'GOOGL', name: 'Alphabet Inc.', price: 151.60, changePercent: 2.10 },
-        { symbol: 'NVDA', name: 'NVIDIA Corp.', price: 875.12, changePercent: 4.80 },
-        { symbol: 'TSLA', name: 'Tesla Inc.', price: 175.34, changePercent: -3.20 },
-        { symbol: 'AMZN', name: 'Amazon.com Inc.', price: 178.15, changePercent: 0.95 },
-        { symbol: 'META', name: 'Meta Platforms', price: 505.20, changePercent: -1.50 },
-        { symbol: 'NFLX', name: 'Netflix Inc.', price: 610.50, changePercent: 1.25 }
+        { symbol: 'AAPL', name: 'Apple Inc.', price: 314.58, changePercent: 0.00 },
+        { symbol: 'MSFT', name: 'Microsoft Corp.', price: 505.06, changePercent: 0.00 },
+        { symbol: 'GOOGL', name: 'Alphabet Inc.', price: 340.65, changePercent: 0.00 },
+        { symbol: 'NVDA', name: 'NVIDIA Corp.', price: 138.85, changePercent: 0.00 },
+        { symbol: 'TSLA', name: 'Tesla, Inc.', price: 354.81, changePercent: 0.00 },
+        { symbol: 'AMZN', name: 'Amazon.com Inc.', price: 221.42, changePercent: 0.00 },
+        { symbol: 'META', name: 'Meta Platforms', price: 687.30, changePercent: 0.00 },
+        { symbol: 'NFLX', name: 'Netflix Inc.', price: 79.84, changePercent: 0.00 }
       ]
     );
 
@@ -1527,7 +1531,18 @@ export default function App() {
               <LineChart className="w-3.5 h-3.5" />
               <span>when to invest</span>
             </button>
+            <button
+              onClick={() => setViewMode('nasdaq_signals')}
+              className={`flex-1 py-2.5 rounded-xl font-bold text-[10px] sm:text-xs flex items-center justify-center gap-1.5 sm:gap-2 transition-all ${viewMode === 'nasdaq_signals'
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/20'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900/50'
+                }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>NASDAQ Signals</span>
+            </button>
           </div>
+
 
           {/* ================= VIEW 1: ANALYSIS DECK ================= */}
           {viewMode === 'deck' && (
@@ -1958,6 +1973,12 @@ export default function App() {
               isLoading={isWhenToInvestLoading}
             />
           )}
+
+          {/* ================= VIEW 6: NASDAQ SIGNALS ================= */}
+          {viewMode === 'nasdaq_signals' && (
+            <NasdaqSignalsTab authFetch={authFetch} />
+          )}
+
 
         </section>
 
