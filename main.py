@@ -1621,11 +1621,18 @@ def api_when_to_invest(symbol: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"When-to-invest analysis failed: {str(e)}")
 
 # ---------------------------------------------------------------------------
-# NASDAQ Signals — Top 10 Buy & Top 10 Sell (Book Profit)
-# Scans all NASDAQ_SELECT tickers using the same When-to-Invest logic.
+# NASDAQ Signals 2.0 — Multi-Factor Institutional Engine (0-100 Score)
+# Combines: Technicals (30%), Fundamentals (20%), Macro/Yield Spread (20%),
+# Sentiment (15%), ML 30-Day Forecast (15%) + Entry/Exit Targets & Top Pick Thesis.
 # ---------------------------------------------------------------------------
-@app.get("/api/nasdaq-signals")
-def api_nasdaq_signals(symbol: Optional[str] = None, user: dict = Depends(get_current_user)):
+_SIGNALS_CACHE = {"data": None, "ts": 0}
+
+def _get_cached_nasdaq_signals():
+    import time
+    now = time.time()
+    if _SIGNALS_CACHE["data"] and (now - _SIGNALS_CACHE["ts"]) < 900:
+        return _SIGNALS_CACHE["data"]
+
     from when_to_invest_engine import compute_technical_indicators, generate_recommendation
     import concurrent.futures
 
@@ -1915,25 +1922,8 @@ def api_nasdaq_signals(symbol: Optional[str] = None, user: dict = Depends(get_cu
         except Exception:
             return None
 
-_SIGNALS_CACHE = {"data": None, "ts": 0}
 
-def _get_cached_nasdaq_signals():
-    import time
-    now = time.time()
-    if _SIGNALS_CACHE["data"] and (now - _SIGNALS_CACHE["ts"]) < 900:
-        return _SIGNALS_CACHE["data"]
-    from when_to_invest_engine import compute_technical_indicators, generate_recommendation
-    import concurrent.futures
-
-    # Fetch macro context once
-    yield_spread = 0.5
-    try:
-        ys_series = fetch_treasury_yield_spread(period="6mo")
-        if not ys_series.empty:
-            yield_spread = float(ys_series.iloc[-1])
-    except Exception:
-        pass
-
+    macro_catalysts = []
     macro_sent_avg = 0.0
     try:
         macro_catalysts = scan_macro_catalysts()[:5]
@@ -2241,6 +2231,7 @@ def api_nasdaq_signals_analyze(symbol: str, user: dict = Depends(get_current_use
         "item": item,
         "spotlight": spotlight
     }
+
 
 
 # --- SERVE FRONTEND STATIC FILES ---
