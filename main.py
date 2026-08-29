@@ -1961,8 +1961,10 @@ def _get_cached_nasdaq_signals():
 
 
 @app.get("/api/nasdaq-signals")
-def api_nasdaq_signals(symbol: Optional[str] = None, user: dict = Depends(get_current_user)):
+def api_nasdaq_signals(symbol: Optional[str] = None, refresh: bool = False, user: dict = Depends(get_current_user)):
     try:
+        if refresh:
+            _SIGNALS_CACHE["ts"] = 0  # Force recalculation when explicitly clicked by user
         payload = _get_cached_nasdaq_signals()
         buy_list = payload.get("buy", [])
         sell_list = payload.get("sell", [])

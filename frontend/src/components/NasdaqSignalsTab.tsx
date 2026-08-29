@@ -376,11 +376,12 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
   const [isSearchingCustom, setIsSearchingCustom] = useState(false);
   const [searchError, setSearchError] = useState('');
 
-  const fetchSignals = useCallback(async () => {
+  const fetchSignals = useCallback(async (forceRefresh = false) => {
     setIsLoading(true);
     setError('');
     try {
-      const resp = await authFetch('/api/nasdaq-signals');
+      const url = forceRefresh ? '/api/nasdaq-signals?refresh=true' : '/api/nasdaq-signals';
+      const resp = await authFetch(url);
       if (!resp.ok) throw new Error('Failed to load NASDAQ signals');
       const json = await resp.json();
       setData(json);
@@ -393,7 +394,7 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
   }, [authFetch]);
 
   useEffect(() => {
-    fetchSignals();
+    fetchSignals(false);
   }, [fetchSignals]);
 
   const handleSearchSubmit = async (e?: React.FormEvent) => {
@@ -499,12 +500,12 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
             </span>
           )}
           <button
-            onClick={fetchSignals}
+            onClick={() => fetchSignals(true)}
             disabled={isLoading}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-brandBlue/20 hover:from-amber-500/30 hover:to-brandBlue/30 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all shadow-lg shadow-amber-500/10 disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-brandBlue/20 hover:from-amber-500/30 hover:to-brandBlue/30 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all shadow-lg shadow-amber-500/10 disabled:opacity-50 cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-amber-400' : ''}`} />
-            {isLoading ? 'Computing Multi-Factor Scores...' : 'Refresh 20 Signals'}
+            {isLoading ? 'Recalculating Multi-Factor Scores...' : 'Refresh 20 Signals'}
           </button>
         </div>
       </div>
@@ -808,7 +809,7 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
             <AlertTriangle className="w-4 h-4 text-rose-400" />
             <span>{error}</span>
           </div>
-          <button onClick={fetchSignals} className="px-4 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold transition-all">
+          <button onClick={() => fetchSignals(true)} className="px-4 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold transition-all">
             Retry Quantitative Scan
           </button>
         </div>
