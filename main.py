@@ -1906,8 +1906,13 @@ def api_nasdaq_signals(symbol: Optional[str] = None, user: dict = Depends(get_cu
         except Exception:
             return None
 
-@_ttl_cache(ttl=900)
+_SIGNALS_CACHE = {"data": None, "ts": 0}
+
 def _get_cached_nasdaq_signals():
+    import time
+    now = time.time()
+    if _SIGNALS_CACHE["data"] and (now - _SIGNALS_CACHE["ts"]) < 900:
+        return _SIGNALS_CACHE["data"]
     from when_to_invest_engine import compute_technical_indicators, generate_recommendation
     import concurrent.futures
 
@@ -1944,12 +1949,15 @@ def _get_cached_nasdaq_signals():
     if top_pick:
         top_pick_analysis = _build_spotlight_analysis(top_pick)
 
-    return {
+    payload = {
         "buy": buy_list,
         "sell": sell_list,
         "top_pick": top_pick_analysis,
         "all_results": results
     }
+    _SIGNALS_CACHE["data"] = payload
+    _SIGNALS_CACHE["ts"] = now
+    return payload
 
 
 @app.get("/api/nasdaq-signals")
