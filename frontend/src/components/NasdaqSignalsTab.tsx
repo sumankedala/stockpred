@@ -370,6 +370,12 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
   const [activeFilter, setActiveFilter] = useState<'all' | 'tech' | 'ml' | 'fund' | 'sent'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Custom Search Analysis State
+  const [searchedSpotlight, setSearchedSpotlight] = useState<TopPickAnalysis | null>(null);
+  const [searchedItem, setSearchedItem] = useState<NasdaqSignalItem | null>(null);
+  const [isSearchingCustom, setIsSearchingCustom] = useState(false);
+  const [searchError, setSearchError] = useState('');
+
   const fetchSignals = useCallback(async () => {
     setIsLoading(true);
     setError('');
@@ -390,10 +396,49 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
     fetchSignals();
   }, [fetchSignals]);
 
+  const handleSearchSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const query = searchQuery.trim().toUpperCase();
+    if (!query) return;
+
+    setSearchError('');
+    setIsSearchingCustom(true);
+    try {
+      const resp = await authFetch(`/api/nasdaq-signals/analyze?symbol=${encodeURIComponent(query)}`);
+      if (!resp.ok) {
+        const errJson = await resp.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Could not find stock '${query}'`);
+      }
+      const json = await resp.json();
+      if (json.spotlight) {
+        setSearchedSpotlight(json.spotlight);
+        setSearchedItem(json.item);
+        window.scrollTo({ top: 100, behavior: 'smooth' });
+      }
+    } catch (err: any) {
+      setSearchError(err.message || `Failed to analyze stock '${query}'`);
+    } finally {
+      setIsSearchingCustom(false);
+    }
+  };
+
+  const handleResetSpotlight = () => {
+    setSearchedSpotlight(null);
+    setSearchedItem(null);
+    setSearchQuery('');
+    setSearchError('');
+  };
+
+  // Active Spotlight (Searched custom stock OR #1 Top Conviction Pick)
+  const activeSpotlight = searchedSpotlight || data?.top_pick;
+
   // Filtered & Sorted items
   const filteredBuy = useMemo(() => {
     if (!data?.buy) return [];
     let items = [...data.buy];
+    if (searchedItem && searchedItem.composite_score >= 50 && !items.some(s => s.symbol === searchedItem.symbol)) {
+      items = [searchedItem, ...items];
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       items = items.filter(s => s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q));
@@ -403,11 +448,14 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
     if (activeFilter === 'fund') items.sort((a, b) => b.scores.fundamentals - a.scores.fundamentals);
     if (activeFilter === 'sent') items.sort((a, b) => b.scores.sentiment - a.scores.sentiment);
     return items;
-  }, [data?.buy, activeFilter, searchQuery]);
+  }, [data?.buy, activeFilter, searchQuery, searchedItem]);
 
   const filteredSell = useMemo(() => {
     if (!data?.sell) return [];
     let items = [...data.sell];
+    if (searchedItem && searchedItem.composite_score < 50 && !items.some(s => s.symbol === searchedItem.symbol)) {
+      items = [searchedItem, ...items];
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       items = items.filter(s => s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q));
@@ -417,7 +465,7 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
     if (activeFilter === 'fund') items.sort((a, b) => a.scores.fundamentals - b.scores.fundamentals);
     if (activeFilter === 'sent') items.sort((a, b) => a.scores.sentiment - b.scores.sentiment);
     return items;
-  }, [data?.sell, activeFilter, searchQuery]);
+  }, [data?.sell, activeFilter, searchQuery, searchedItem]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -462,11 +510,28 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
       </div>
 
       {/* TOP ALPHA SPOTLIGHT HERO CARD */}
-      {data?.top_pick && (
+      {activeSpotlight && (
         <div className="relative overflow-hidden glass-panel rounded-3xl border-2 border-amber-500/50 bg-gradient-to-br from-amber-950/40 via-slate-900/70 to-slate-950 p-6 sm:p-7 shadow-2xl shadow-amber-950/40">
           <div className="absolute -top-16 -right-16 w-64 h-64 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
           <div className="absolute -bottom-16 -left-16 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
           
+          {/* Custom Search Reset Banner */}
+          {searchedSpotlight && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-amber-500/15 border border-amber-500/40 rounded-2xl p-3 mb-5 backdrop-blur-md">
+              <div className="flex items-center gap-2.5 text-xs text-amber-300 font-bold">
+                <Search className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Custom Stock Analysis Spotlight: <strong className="text-white font-mono text-sm">{searchedSpotlight.symbol}</strong> ({searchedSpotlight.name})</span>
+              </div>
+              <button
+                onClick={handleResetSpotlight}
+                className="self-start sm:self-auto text-[11px] font-bold text-slate-300 hover:text-white bg-slate-900/90 hover:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700 transition-all flex items-center gap-1.5"
+              >
+                <span>Reset to #1 Pick ({data?.top_pick?.symbol})</span>
+                <span className="text-amber-400">✕</span>
+              </button>
+            </div>
+          )}
+
           {/* Hero Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-amber-500/20">
             <div className="flex items-center gap-2.5">
@@ -474,13 +539,17 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
                 <Award className="w-5 h-5 text-amber-400 animate-pulse" />
               </div>
               <div>
-                <span className="text-xs font-black uppercase tracking-wider text-amber-400">#1 Top Alpha Conviction Pick</span>
-                <div className="text-[11px] text-slate-400">Highest ranked institutional accumulation thesis</div>
+                <span className="text-xs font-black uppercase tracking-wider text-amber-400">
+                  {searchedSpotlight ? `Custom Searched Analysis: ${activeSpotlight.symbol}` : '#1 Top Alpha Conviction Pick'}
+                </span>
+                <div className="text-[11px] text-slate-400">
+                  {searchedSpotlight ? 'Institutional multi-factor breakdown & trading targets' : 'Highest ranked institutional accumulation thesis'}
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-black text-emerald-400 bg-emerald-500/20 px-3 py-1 rounded-full border border-emerald-500/40 shadow-md shadow-emerald-500/20">
-                🟢 {data.top_pick.action_text || 'STRONG BUY / ACCUMULATE NOW'}
+                🟢 {activeSpotlight.action_text || 'STRONG BUY / ACCUMULATE NOW'}
               </span>
             </div>
           </div>
@@ -490,20 +559,20 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
             
             {/* Stock Identity (4 cols) */}
             <div className="lg:col-span-4 flex items-center gap-4 bg-slate-950/60 rounded-2xl p-4 border border-amber-500/30">
-              <ScoreRing score={data.top_pick.composite_score} size="large" />
+              <ScoreRing score={activeSpotlight.composite_score} size="large" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-2xl sm:text-3xl font-black text-white tracking-tight font-mono">{data.top_pick.symbol}</span>
+                  <span className="text-2xl sm:text-3xl font-black text-white tracking-tight font-mono">{activeSpotlight.symbol}</span>
                   <span className="text-xs font-bold text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
-                    Rank #1
+                    {searchedSpotlight ? 'Custom Search' : 'Rank #1'}
                   </span>
                 </div>
-                <div className="text-xs text-slate-400 font-medium truncate mt-0.5">{data.top_pick.name}</div>
+                <div className="text-xs text-slate-400 font-medium truncate mt-0.5">{activeSpotlight.name}</div>
                 <div className="flex items-baseline gap-2 mt-1.5">
-                  <span className="text-xl font-black text-emerald-400 font-mono">${data.top_pick.price.toFixed(2)}</span>
-                  {data.top_pick.change_pct !== undefined && (
-                    <span className={`text-xs font-bold font-mono ${data.top_pick.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {data.top_pick.change_pct >= 0 ? '+' : ''}{data.top_pick.change_pct.toFixed(2)}%
+                  <span className="text-xl font-black text-emerald-400 font-mono">${activeSpotlight.price.toFixed(2)}</span>
+                  {activeSpotlight.change_pct !== undefined && (
+                    <span className={`text-xs font-bold font-mono ${activeSpotlight.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {activeSpotlight.change_pct >= 0 ? '+' : ''}{activeSpotlight.change_pct.toFixed(2)}%
                     </span>
                   )}
                 </div>
@@ -514,17 +583,17 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
             <div className="lg:col-span-4 grid grid-cols-3 gap-2 bg-slate-950/80 rounded-2xl p-3.5 border border-amber-500/40 text-center">
               <div className="flex flex-col justify-center">
                 <div className="text-[9px] text-emerald-400/90 uppercase font-black tracking-wider">Buy Entry Zone</div>
-                <div className="text-emerald-400 font-black mt-1 text-xs sm:text-sm font-mono truncate">{data.top_pick.targets.buy_zone}</div>
+                <div className="text-emerald-400 font-black mt-1 text-xs sm:text-sm font-mono truncate">{activeSpotlight.targets.buy_zone}</div>
                 <div className="text-[8px] text-slate-500 mt-0.5">Support Accumulation</div>
               </div>
               <div className="flex flex-col justify-center border-x border-slate-800 px-1">
                 <div className="text-[9px] text-indigo-400 uppercase font-black tracking-wider">Take Profit Target</div>
-                <div className="text-indigo-300 font-black mt-1 text-xs sm:text-sm font-mono truncate">{data.top_pick.targets.exit_target}</div>
+                <div className="text-indigo-300 font-black mt-1 text-xs sm:text-sm font-mono truncate">{activeSpotlight.targets.exit_target}</div>
                 <div className="text-[8px] text-slate-500 mt-0.5">Resistance Exit</div>
               </div>
               <div className="flex flex-col justify-center">
                 <div className="text-[9px] text-rose-400 uppercase font-black tracking-wider">Stop Loss Floor</div>
-                <div className="text-rose-400 font-black mt-1 text-xs sm:text-sm font-mono truncate">{data.top_pick.targets.stop_loss}</div>
+                <div className="text-rose-400 font-black mt-1 text-xs sm:text-sm font-mono truncate">{activeSpotlight.targets.stop_loss}</div>
                 <div className="text-[8px] text-slate-500 mt-0.5">Risk Protection</div>
               </div>
             </div>
@@ -533,18 +602,18 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
             <div className="lg:col-span-4 flex flex-col gap-2 bg-slate-950/60 rounded-2xl p-3.5 border border-slate-800/90">
               <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center justify-between mb-1">
                 <span>5-Factor Model Breakdown</span>
-                <span className="text-amber-400 font-black">{data.top_pick.composite_score}/100</span>
+                <span className="text-amber-400 font-black">{activeSpotlight.composite_score}/100</span>
               </div>
-              <FactorBar label="Technicals Setup (30%)" score={data.top_pick.scores.technicals} max={30} color="bg-cyan-400" />
-              <FactorBar label="Fundamentals & Valuation (20%)" score={data.top_pick.scores.fundamentals} max={20} color="bg-indigo-400" />
-              <FactorBar label="Macro & Sector (20%)" score={data.top_pick.scores.macro} max={20} color="bg-amber-400" />
-              <FactorBar label="News Sentiment (15%)" score={data.top_pick.scores.sentiment} max={15} color="bg-emerald-400" />
-              <FactorBar label="ML 30D Forecast (15%)" score={data.top_pick.scores.ml} max={15} color="bg-purple-400" />
+              <FactorBar label="Technicals Setup (30%)" score={activeSpotlight.scores.technicals} max={30} color="bg-cyan-400" />
+              <FactorBar label="Fundamentals & Valuation (20%)" score={activeSpotlight.scores.fundamentals} max={20} color="bg-indigo-400" />
+              <FactorBar label="Macro & Sector (20%)" score={activeSpotlight.scores.macro} max={20} color="bg-amber-400" />
+              <FactorBar label="News Sentiment (15%)" score={activeSpotlight.scores.sentiment} max={15} color="bg-emerald-400" />
+              <FactorBar label="ML 30D Forecast (15%)" score={activeSpotlight.scores.ml} max={15} color="bg-purple-400" />
             </div>
           </div>
 
           {/* Interactive Price Chart with Entry & Exit Bands */}
-          {data.top_pick.chart_data && data.top_pick.chart_data.length > 0 && (
+          {activeSpotlight.chart_data && activeSpotlight.chart_data.length > 0 && (
             <div className="mt-6 bg-slate-950/80 rounded-2xl p-4 sm:p-5 border border-slate-800/90">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                 <div className="flex items-center gap-2">
@@ -558,31 +627,31 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block" /> Price
                   </span>
                   <span className="flex items-center gap-1.5 text-indigo-400">
-                    <span className="w-2.5 h-0.5 bg-indigo-400 inline-block" /> Exit Target ({data.top_pick.targets.exit_target})
+                    <span className="w-2.5 h-0.5 bg-indigo-400 inline-block" /> Exit Target ({activeSpotlight.targets.exit_target})
                   </span>
                   <span className="flex items-center gap-1.5 text-emerald-300">
-                    <span className="w-2.5 h-0.5 bg-emerald-400 inline-block" /> Buy Zone ({data.top_pick.targets.buy_zone})
+                    <span className="w-2.5 h-0.5 bg-emerald-400 inline-block" /> Buy Zone ({activeSpotlight.targets.buy_zone})
                   </span>
                   <span className="flex items-center gap-1.5 text-rose-400">
-                    <span className="w-2.5 h-0.5 bg-rose-400 inline-block" /> Stop Loss ({data.top_pick.targets.stop_loss})
+                    <span className="w-2.5 h-0.5 bg-rose-400 inline-block" /> Stop Loss ({activeSpotlight.targets.stop_loss})
                   </span>
                 </div>
               </div>
 
               <div className="h-56 sm:h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={data.top_pick.chart_data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <ComposedChart data={activeSpotlight.chart_data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                     <XAxis dataKey="date" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 10 }} tickLine={false} />
                     <YAxis domain={['auto', 'auto']} stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 10 }} tickLine={false} />
                     <Tooltip content={<TopPickChartTooltip />} />
-                    {data.top_pick.targets.exit_target_val && (
-                      <ReferenceLine y={data.top_pick.targets.exit_target_val} stroke="#818cf8" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: 'Target Exit', fill: '#818cf8', fontSize: 10, position: 'insideTopRight' }} />
+                    {activeSpotlight.targets.exit_target_val && (
+                      <ReferenceLine y={activeSpotlight.targets.exit_target_val} stroke="#818cf8" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: 'Target Exit', fill: '#818cf8', fontSize: 10, position: 'insideTopRight' }} />
                     )}
-                    {data.top_pick.targets.buy_zone_high && (
-                      <ReferenceLine y={data.top_pick.targets.buy_zone_high} stroke="#34d399" strokeDasharray="3 3" strokeWidth={1.5} label={{ value: 'Buy Zone High', fill: '#34d399', fontSize: 10, position: 'insideRight' }} />
+                    {activeSpotlight.targets.buy_zone_high && (
+                      <ReferenceLine y={activeSpotlight.targets.buy_zone_high} stroke="#34d399" strokeDasharray="3 3" strokeWidth={1.5} label={{ value: 'Buy Zone High', fill: '#34d399', fontSize: 10, position: 'insideRight' }} />
                     )}
-                    {data.top_pick.targets.stop_loss_val && (
-                      <ReferenceLine y={data.top_pick.targets.stop_loss_val} stroke="#f43f5e" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: 'Stop Loss', fill: '#f43f5e', fontSize: 10, position: 'insideBottomRight' }} />
+                    {activeSpotlight.targets.stop_loss_val && (
+                      <ReferenceLine y={activeSpotlight.targets.stop_loss_val} stroke="#f43f5e" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: 'Stop Loss', fill: '#f43f5e', fontSize: 10, position: 'insideBottomRight' }} />
                     )}
                     <Area type="monotone" dataKey="price" stroke="#10b981" strokeWidth={2.5} fillOpacity={0.15} fill="#10b981" isAnimationActive={false} />
                     <Line type="monotone" dataKey="upper_band" stroke="#6366f1" strokeWidth={1.2} strokeDasharray="2 2" dot={false} isAnimationActive={false} />
@@ -601,19 +670,19 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
                 <Sparkles className="w-4 h-4 text-amber-400" /> Full Quantitative Investment Thesis:
               </span>
               <p className="text-slate-200 leading-normal text-xs sm:text-sm">
-                {data.top_pick.thesis.replace(/\*\*/g, '')}
+                {activeSpotlight.thesis.replace(/\*\*/g, '')}
               </p>
             </div>
 
             {/* Key Catalysts & Risks (1 col) */}
             <div className="flex flex-col gap-3">
-              {data.top_pick.catalysts && data.top_pick.catalysts.length > 0 && (
+              {activeSpotlight.catalysts && activeSpotlight.catalysts.length > 0 && (
                 <div className="bg-emerald-950/30 rounded-2xl p-3.5 border border-emerald-500/30">
                   <div className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5 mb-2">
                     <CheckCircle2 className="w-3.5 h-3.5" /> Key Bullish Catalysts:
                   </div>
                   <ul className="space-y-1.5 text-[11px] text-slate-300">
-                    {data.top_pick.catalysts.map((cat, i) => (
+                    {activeSpotlight.catalysts.map((cat, i) => (
                       <li key={i} className="flex items-start gap-1.5">
                         <span className="text-emerald-400 font-bold">•</span>
                         <span>{cat}</span>
@@ -623,13 +692,13 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
                 </div>
               )}
 
-              {data.top_pick.risks && data.top_pick.risks.length > 0 && (
+              {activeSpotlight.risks && activeSpotlight.risks.length > 0 && (
                 <div className="bg-rose-950/30 rounded-2xl p-3.5 border border-rose-500/30">
                   <div className="text-[10px] font-black uppercase tracking-wider text-rose-400 flex items-center gap-1.5 mb-2">
                     <ShieldAlert className="w-3.5 h-3.5" /> Risk Management & Stop-Loss:
                   </div>
                   <ul className="space-y-1.5 text-[11px] text-slate-300">
-                    {data.top_pick.risks.map((r, i) => (
+                    {activeSpotlight.risks.map((r, i) => (
                       <li key={i} className="flex items-start gap-1.5">
                         <span className="text-rose-400 font-bold">•</span>
                         <span>{r}</span>
@@ -671,18 +740,52 @@ export const NasdaqSignalsTab: React.FC<NasdaqSignalsTabProps> = ({ authFetch })
           ))}
         </div>
 
-        {/* Search Input */}
-        <div className="relative min-w-[200px] sm:min-w-[240px]">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search NASDAQ 20..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50"
-          />
-        </div>
+        {/* Dynamic Stock Search Form */}
+        <form onSubmit={handleSearchSubmit} className="flex items-center gap-2 min-w-[240px] sm:min-w-[320px]">
+          <div className="relative flex-1">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Search any stock (e.g. PLTR, NVDA, BABA, TSLA)..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-9 pr-8 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 font-medium"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs font-bold"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <button
+            type="submit"
+            disabled={isSearchingCustom || !searchQuery.trim()}
+            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs transition-all shadow-md shadow-amber-500/20 disabled:opacity-50 flex items-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            {isSearchingCustom ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
+            ) : (
+              <Zap className="w-3.5 h-3.5 text-slate-950 fill-slate-950" />
+            )}
+            <span>{isSearchingCustom ? 'Analyzing...' : 'Analyze'}</span>
+          </button>
+        </form>
       </div>
+
+      {/* Search Error Notice */}
+      {searchError && (
+        <div className="glass-panel rounded-2xl border border-rose-500/40 p-3.5 text-rose-400 text-xs flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-2 font-bold">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{searchError}</span>
+          </div>
+          <button onClick={() => setSearchError('')} className="text-slate-400 hover:text-white font-bold px-2 py-0.5">✕</button>
+        </div>
+      )}
 
       {/* Loading Skeleton */}
       {isLoading && !data && (

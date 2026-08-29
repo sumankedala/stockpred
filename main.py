@@ -1922,74 +1922,263 @@ def api_nasdaq_signals(user: dict = Depends(get_current_user)):
     top_pick = buy_list[0] if buy_list else None
     top_pick_analysis = None
     if top_pick:
-        sym = top_pick["symbol"]
-        
-        # Build 60-day historical chart data for interactive visualizer with Entry/Exit bands
-        chart_data = []
-        try:
-            df_pick = fetch_ohlcv(sym, period="6mo")
-            if not df_pick.empty:
-                df_pick_ind = compute_technical_indicators(df_pick).tail(60)
-                for dt_idx, r_row in df_pick_ind.iterrows():
-                    chart_data.append({
-                        "date": dt_idx.strftime("%b %d"),
-                        "price": round(float(r_row["Close"]), 2),
-                        "upper_band": round(float(r_row["Upper_Band"]), 2),
-                        "lower_band": round(float(r_row["Lower_Band"]), 2),
-                        "sma50": round(float(r_row.get("SMA50", r_row["Close"])), 2),
-                        "buy_zone_low": top_pick["targets"]["buy_zone_low"],
-                        "buy_zone_high": top_pick["targets"]["buy_zone_high"],
-                        "exit_target": top_pick["targets"]["exit_target_val"],
-                        "stop_loss": top_pick["targets"]["stop_loss_val"],
-                    })
-        except Exception:
-            pass
+        top_pick_analysis = _build_spotlight_analysis(top_pick)
 
-        # Build Catalysts and Risk Factors
-        catalysts = [
-            f"Institutional Quantitative Model ranks {sym} #1 with a 5-factor composite score of {top_pick['composite_score']}/100.",
-            f"Technical momentum displays {top_pick['macd_status']} with RSI sitting at {top_pick['rsi']}.",
-            f"Fundamental valuation supported by Forward P/E of {top_pick['pe_ratio']} and EPS Growth at {top_pick['eps_growth']}."
-        ]
-        if top_pick.get("headlines"):
-            for h in top_pick["headlines"]:
-                if h["sentiment"] == "Bullish":
-                    catalysts.append(f"Live Catalyst: {h['title']} ({h['source']})")
-                    break
-
-        risks = [
-            f"Strict Stop-Loss Protection Floor should be maintained at {top_pick['targets']['stop_loss']}.",
-            f"Sector risk and broad macro yield curve dynamics ({top_pick['sector_momentum']} sector momentum).",
-            f"Watch upper resistance volatility near the profit target zone of {top_pick['targets']['exit_target']}."
-        ]
-
-        top_pick_analysis = {
-            "symbol": sym,
-            "name": top_pick["name"],
-            "price": top_pick["price"],
-            "change_pct": top_pick["change_pct"],
-            "composite_score": top_pick["composite_score"],
-            "verdict": top_pick["verdict"],
-            "action_text": top_pick["action_text"],
-            "scores": top_pick["scores"],
-            "targets": top_pick["targets"],
-            "chart_data": chart_data,
-            "catalysts": catalysts[:3],
-            "risks": risks[:3],
-            "headlines": top_pick.get("headlines", []),
-            "thesis": (
-                f"**{sym} ({top_pick['name']})** is currently ranked as our **#1 Top Alpha Conviction Pick** with an institutional Composite Score of **{top_pick['composite_score']}/100**. "
-                f"The technical setup reflects a prime accumulation phase (RSI: {top_pick['rsi']}, MACD: {top_pick['macd_status']}, {top_pick['sma_status']}). "
-                f"Valuation metrics remain highly favorable with a Forward P/E of **{top_pick['pe_ratio']}**, EPS Growth of **{top_pick['eps_growth']}**, and positive cash flows. "
-                f"Our ensemble ML engine projects a **{top_pick['ml_forecast_pct']}** 30-day forecasted return. "
-                f"Recommended accumulation entry is inside the zone **{top_pick['targets']['buy_zone']}** with a profit target of **{top_pick['targets']['exit_target']}** and strict stop-loss at **{top_pick['targets']['stop_loss']}**."
-            )
-        }
-
-    return {
+    response_payload = {
         "buy": buy_list,
         "sell": sell_list,
         "top_pick": top_pick_analysis
+    }
+
+    # If explicit symbol query parameter was passed, analyze and attach requested stock
+    if symbol and symbol.strip():
+        req_sym = resolve_symbol(symbol.strip()) or symbol.strip().upper()
+        # Check if already in scanned results
+        existing = next((r for r in results if r["symbol"] == req_sym), None)
+        if not existing:
+            existing = _analyze_ticker(req_sym)
+        if existing:
+            response_payload["searched_stock"] = _build_spotlight_analysis(existing)
+            response_payload["searched_item"] = existing
+
+    return response_payload
+
+
+def _build_spotlight_analysis(item: dict) -> dict:
+    from when_to_invest_engine import compute_technical_indicators
+    sym = item["symbol"]
+    chart_data = []
+    try:
+        df_pick = fetch_ohlcv(sym, period="6mo")
+        if not df_pick.empty:
+            df_pick_ind = compute_technical_indicators(df_pick).tail(60)
+            for dt_idx, r_row in df_pick_ind.iterrows():
+                chart_data.append({
+                    "date": dt_idx.strftime("%b %d"),
+                    "price": round(float(r_row["Close"]), 2),
+                    "upper_band": round(float(r_row["Upper_Band"]), 2),
+                    "lower_band": round(float(r_row["Lower_Band"]), 2),
+                    "sma50": round(float(r_row.get("SMA50", r_row["Close"])), 2),
+                    "buy_zone_low": item["targets"]["buy_zone_low"],
+                    "buy_zone_high": item["targets"]["buy_zone_high"],
+                    "exit_target": item["targets"]["exit_target_val"],
+                    "stop_loss": item["targets"]["stop_loss_val"],
+                })
+    except Exception:
+        pass
+
+    catalysts = [
+        f"Institutional Quantitative Model ranks {sym} with a 5-factor composite score of {item['composite_score']}/100.",
+        f"Technical momentum displays {item['macd_status']} with RSI sitting at {item['rsi']}.",
+        f"Fundamental valuation supported by Forward P/E of {item['pe_ratio']} and EPS Growth at {item['eps_growth']}."
+    ]
+    if item.get("headlines"):
+        for h in item["headlines"]:
+            if h.get("sentiment") == "Bullish":
+                catalysts.append(f"Live Catalyst: {h['title']} ({h['source']})")
+                break
+
+    risks = [
+        f"Strict Stop-Loss Protection Floor should be maintained at {item['targets']['stop_loss']}.",
+        f"Sector risk and broad macro yield curve dynamics ({item['sector_momentum']} sector momentum).",
+        f"Watch upper resistance volatility near the profit target zone of {item['targets']['exit_target']}."
+    ]
+
+    return {
+        "symbol": sym,
+        "name": item["name"],
+        "price": item["price"],
+        "change_pct": item["change_pct"],
+        "composite_score": item["composite_score"],
+        "verdict": item["verdict"],
+        "action_text": item["action_text"],
+        "scores": item["scores"],
+        "targets": item["targets"],
+        "chart_data": chart_data,
+        "catalysts": catalysts[:3],
+        "risks": risks[:3],
+        "headlines": item.get("headlines", []),
+        "thesis": (
+            f"**{sym} ({item['name']})** has been evaluated by our **Institutional Multi-Factor Engine** with a Composite Score of **{item['composite_score']}/100**. "
+            f"The technical setup displays (RSI: {item['rsi']}, MACD: {item['macd_status']}, {item['sma_status']}). "
+            f"Valuation metrics show Forward P/E at **{item['pe_ratio']}**, EPS Growth at **{item['eps_growth']}**, and cash flow status at **{item['fcf_status']}**. "
+            f"Our ensemble ML engine projects a **{item['ml_forecast_pct']}** 30-day forecasted return. "
+            f"Recommended accumulation entry is inside the zone **{item['targets']['buy_zone']}** with a profit target of **{item['targets']['exit_target']}** and strict stop-loss at **{item['targets']['stop_loss']}**."
+        )
+    }
+
+
+@app.get("/api/nasdaq-signals/analyze")
+def api_nasdaq_signals_analyze(symbol: str, user: dict = Depends(get_current_user)):
+    from when_to_invest_engine import compute_technical_indicators, generate_recommendation
+    resolved = resolve_symbol(symbol) or symbol.strip().upper()
+    if not resolved:
+        raise HTTPException(status_code=404, detail=f"Stock ticker symbol '{symbol}' could not be resolved.")
+    
+    # We can run the single ticker analysis directly using the same engine logic
+    # Fetch macro context
+    yield_spread = 0.5
+    try:
+        ys_series = fetch_treasury_yield_spread(period="6mo")
+        if not ys_series.empty:
+            yield_spread = float(ys_series.iloc[-1])
+    except Exception:
+        pass
+
+    macro_catalysts = []
+    macro_sent_avg = 0.0
+    try:
+        macro_catalysts = scan_macro_catalysts()[:5]
+        if macro_catalysts:
+            macro_sent_avg = sum(c.get("sentiment", 0.0) for c in macro_catalysts) / len(macro_catalysts)
+    except Exception:
+        pass
+
+    df = fetch_ohlcv(resolved, period="1y")
+    if df.empty or len(df) < 30:
+        raise HTTPException(status_code=400, detail=f"Insufficient price history to compute signals for '{resolved}'.")
+
+    df_ind = compute_technical_indicators(df)
+    rec = generate_recommendation(df_ind)
+    fundamentals = fetch_fundamentals(resolved)
+
+    close_series = df["Close"].dropna()
+    curr_price = float(close_series.iloc[-1])
+    prev_price = float(close_series.iloc[-2]) if len(close_series) > 1 else curr_price
+    change_pct = ((curr_price - prev_price) / prev_price * 100) if prev_price > 0 else 0.0
+
+    high_52w = float(close_series.max())
+    low_52w = float(close_series.min())
+
+    rsi = float(df_ind["RSI"].iloc[-1]) if "RSI" in df_ind.columns and not pd.isna(df_ind["RSI"].iloc[-1]) else 50.0
+    sma50 = float(df_ind["SMA50"].iloc[-1]) if "SMA50" in df_ind.columns and not pd.isna(df_ind["SMA50"].iloc[-1]) else curr_price
+    sma200 = float(df_ind["SMA200"].iloc[-1]) if "SMA200" in df_ind.columns and not pd.isna(df_ind["SMA200"].iloc[-1]) else curr_price
+    upper_band = float(df_ind["Upper_Band"].iloc[-1]) if "Upper_Band" in df_ind.columns and not pd.isna(df_ind["Upper_Band"].iloc[-1]) else curr_price * 1.05
+    lower_band = float(df_ind["Lower_Band"].iloc[-1]) if "Lower_Band" in df_ind.columns and not pd.isna(df_ind["Lower_Band"].iloc[-1]) else curr_price * 0.95
+    middle_band = float(df_ind["Middle_Band"].iloc[-1]) if "Middle_Band" in df_ind.columns and not pd.isna(df_ind["Middle_Band"].iloc[-1]) else curr_price
+
+    tech_score = 15.0
+    if rsi < 35: tech_score += 6.0
+    elif rsi < 55: tech_score += 4.0
+    if rec.get("macd_status") == "Bullish Crossover": tech_score += 5.0
+    is_golden_cross = (sma50 > sma200)
+    if is_golden_cross: tech_score += 4.0
+
+    sec_etf = get_sector_etf(resolved)
+    sec_change = 0.0
+    try:
+        sec_df = fetch_sector_ohlcv(sec_etf, period="1mo")
+        if not sec_df.empty and len(sec_df) > 1:
+            sec_c = sec_df["Close"].dropna()
+            sec_change = float((sec_c.iloc[-1] - sec_c.iloc[0]) / sec_c.iloc[0] * 100)
+    except Exception:
+        pass
+
+    macro_score = 10.0 + (1.5 if yield_spread > 0 else -1.5) + (macro_sent_avg * 4.0) + (1.5 if sec_change > 0 else -1.0)
+    macro_score = max(0.0, min(20.0, macro_score))
+
+    pe = fundamentals.get("Forward_PE") or fundamentals.get("Trailing_PE")
+    eps_g = fundamentals.get("Earnings_Growth") or fundamentals.get("Revenue_Growth") or 0.0
+    fcf = fundamentals.get("Free_Cashflow") or 0
+    op_margin = fundamentals.get("Operating_Margin") or fundamentals.get("Profit_Margins") or 0
+
+    pe_pts = 4.0
+    if pe and 0 < pe < 22: pe_pts = 7.0
+    elif pe and 22 <= pe <= 32: pe_pts = 5.5
+    elif pe and 32 < pe <= 45: pe_pts = 3.5
+
+    eps_g_val = float(eps_g * 100) if (eps_g and eps_g < 2.0) else float(eps_g or 0)
+    eps_pts = 3.5
+    if eps_g_val >= 20.0: eps_pts = 7.0
+    elif eps_g_val >= 10.0: eps_pts = 5.5
+
+    fcf_pts = 4.5 if fcf > 0 else 1.5
+    fund_score = max(0.0, min(20.0, pe_pts + eps_pts + fcf_pts))
+
+    headlines_raw = []
+    try: headlines_raw = fetch_news_headlines(resolved, max_items=6)
+    except Exception: pass
+    title_list = [h.get("title", "") for h in headlines_raw if h.get("title")]
+    vader_val = compute_vader_sentiment(title_list) if title_list else 0.0
+    sentiment_score = max(0.0, min(15.0, 7.5 + (vader_val * 7.5)))
+
+    top_news = []
+    for h in headlines_raw[:3]:
+        h_title = h.get("title", "").strip()
+        if h_title:
+            h_sent = compute_vader_sentiment([h_title])
+            top_news.append({
+                "title": h_title,
+                "source": h.get("source", "News"),
+                "sentiment": "Bullish" if h_sent > 0.1 else ("Bearish" if h_sent < -0.1 else "Neutral"),
+                "score": round(h_sent, 2)
+            })
+
+    sma_momentum = ((curr_price - sma50) / sma50 * 100) if sma50 > 0 else 0.0
+    bb_reversion = ((middle_band - curr_price) / curr_price * 100) if curr_price > 0 else 0.0
+    trend_bias = 2.0 if is_golden_cross else -1.5
+    proj_ret_pct = round((sma_momentum * 0.3) + (bb_reversion * 0.4) + (vader_val * 3.0) + trend_bias, 2)
+    ml_score = max(0.0, min(15.0, 7.5 + (proj_ret_pct * 0.75)))
+
+    composite_score = round(tech_score + fund_score + macro_score + sentiment_score + ml_score, 1)
+
+    if composite_score >= 80: verdict, action_text = "STRONG BUY", "ACCUMULATE NOW"
+    elif composite_score >= 65: verdict, action_text = "MODERATE BUY", "FAVORABLE ENTRY"
+    elif composite_score >= 35: verdict, action_text = "HOLD", "CONSOLIDATING"
+    elif composite_score >= 20: verdict, action_text = "MODERATE SELL", "TAKE PROFIT"
+    else: verdict, action_text = "STRONG SELL", "EXIT IMMEDIATELY"
+
+    buy_zone_low = round(min(curr_price * 0.96, lower_band * 0.99), 2)
+    buy_zone_high = round(min(curr_price * 1.01, middle_band * 1.01), 2)
+    exit_target = round(max(curr_price * 1.08, upper_band * 1.02), 2)
+    stop_loss = round(buy_zone_low * 0.95, 2)
+
+    company_name = fundamentals.get("Company_Name") or fundamentals.get("shortName") or resolved
+
+    item = {
+        "symbol": resolved,
+        "name": company_name,
+        "price": round(curr_price, 2),
+        "change_pct": round(change_pct, 2),
+        "sparkline": close_series.tail(30).tolist(),
+        "high_52w": round(high_52w, 2),
+        "low_52w": round(low_52w, 2),
+        "rsi": round(rsi, 1),
+        "composite_score": composite_score,
+        "scores": {
+            "technicals": round(tech_score, 1),
+            "fundamentals": round(fund_score, 1),
+            "macro": round(macro_score, 1),
+            "sentiment": round(sentiment_score, 1),
+            "ml": round(ml_score, 1),
+        },
+        "targets": {
+            "buy_zone": f"${buy_zone_low:.2f} - ${buy_zone_high:.2f}",
+            "buy_zone_low": buy_zone_low,
+            "buy_zone_high": buy_zone_high,
+            "exit_target": f"${exit_target:.2f}",
+            "exit_target_val": exit_target,
+            "stop_loss": f"${stop_loss:.2f}",
+            "stop_loss_val": stop_loss,
+        },
+        "verdict": verdict,
+        "action_text": action_text,
+        "rsi_status": rec.get("rsi_status", "Neutral"),
+        "macd_status": rec.get("macd_status", "Neutral"),
+        "sma_status": "Golden Cross (50>200 SMA)" if is_golden_cross else "Death Cross (50<200 SMA)",
+        "pe_ratio": f"{pe:.1f}" if (isinstance(pe, (int, float)) and pe > 0) else "N/A",
+        "eps_growth": f"{eps_g_val:+.1f}%" if eps_g_val != 0 else "N/A",
+        "fcf_status": "Positive FCF" if fcf > 0 else "Negative FCF",
+        "sector_momentum": f"{sec_change:+.1f}% (1M)",
+        "ml_forecast_pct": f"{proj_ret_pct:+.1f}% (30D)",
+        "headlines": top_news,
+    }
+
+    spotlight = _build_spotlight_analysis(item)
+    return {
+        "status": "success",
+        "item": item,
+        "spotlight": spotlight
     }
 
 
