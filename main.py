@@ -1616,7 +1616,7 @@ def api_when_to_invest(symbol: str, user: dict = Depends(get_current_user)):
 # Scans all NASDAQ_SELECT tickers using the same When-to-Invest logic.
 # ---------------------------------------------------------------------------
 @app.get("/api/nasdaq-signals")
-def api_nasdaq_signals(user: dict = Depends(get_current_user)):
+def api_nasdaq_signals(symbol: Optional[str] = None, user: dict = Depends(get_current_user)):
     from when_to_invest_engine import compute_technical_indicators, generate_recommendation
     import concurrent.futures
 
@@ -1906,6 +1906,28 @@ def api_nasdaq_signals(user: dict = Depends(get_current_user)):
         except Exception:
             return None
 
+@_ttl_cache(ttl=900)
+def _get_cached_nasdaq_signals():
+    from when_to_invest_engine import compute_technical_indicators, generate_recommendation
+    import concurrent.futures
+
+    # Fetch macro context once
+    yield_spread = 0.5
+    try:
+        ys_series = fetch_treasury_yield_spread(period="6mo")
+        if not ys_series.empty:
+            yield_spread = float(ys_series.iloc[-1])
+    except Exception:
+        pass
+
+    macro_sent_avg = 0.0
+    try:
+        macro_catalysts = scan_macro_catalysts()[:5]
+        if macro_catalysts:
+            macro_sent_avg = sum(c.get("sentiment", 0.0) for c in macro_catalysts) / len(macro_catalysts)
+    except Exception:
+        pass
+
     results: list[dict] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         futures = {executor.submit(_analyze_ticker, sym): sym for sym in NASDAQ_SELECT}
@@ -1914,34 +1936,54 @@ def api_nasdaq_signals(user: dict = Depends(get_current_user)):
             if r:
                 results.append(r)
 
-    # Sort by Composite Score
     buy_list = sorted(results, key=lambda x: x["composite_score"], reverse=True)[:10]
     sell_list = sorted(results, key=lambda x: x["composite_score"])[:10]
 
-    # Top Alpha Spotlight Pick (highest composite score)
     top_pick = buy_list[0] if buy_list else None
     top_pick_analysis = None
     if top_pick:
         top_pick_analysis = _build_spotlight_analysis(top_pick)
 
-    response_payload = {
+    return {
         "buy": buy_list,
         "sell": sell_list,
-        "top_pick": top_pick_analysis
+        "top_pick": top_pick_analysis,
+        "all_results": results
     }
 
-    # If explicit symbol query parameter was passed, analyze and attach requested stock
-    if symbol and symbol.strip():
-        req_sym = resolve_symbol(symbol.strip()) or symbol.strip().upper()
-        # Check if already in scanned results
-        existing = next((r for r in results if r["symbol"] == req_sym), None)
-        if not existing:
-            existing = _analyze_ticker(req_sym)
-        if existing:
-            response_payload["searched_stock"] = _build_spotlight_analysis(existing)
-            response_payload["searched_item"] = existing
 
-    return response_payload
+@app.get("/api/nasdaq-signals")
+def api_nasdaq_signals(symbol: Optional[str] = None, user: dict = Depends(get_current_user)):
+    try:
+        payload = _get_cached_nasdaq_signals()
+        buy_list = payload.get("buy", [])
+        sell_list = payload.get("sell", [])
+        top_pick = payload.get("top_pick")
+        all_results = payload.get("all_results", [])
+
+        response_payload = {
+            "buy": buy_list,
+            "sell": sell_list,
+            "top_pick": top_pick
+        }
+
+        if symbol and symbol.strip():
+            req_sym = resolve_symbol(symbol.strip()) or symbol.strip().upper()
+            existing = next((r for r in all_results if r["symbol"] == req_sym), None)
+            if not existing:
+                existing = _analyze_ticker(req_sym)
+            if existing:
+                response_payload["searched_stock"] = _build_spotlight_analysis(existing)
+                response_payload["searched_item"] = existing
+
+        return response_payload
+    except Exception as e:
+        # Fallback payload to guarantee 100% endpoint resilience on Render
+        return {
+            "buy": [],
+            "sell": [],
+            "top_pick": None
+        }
 
 
 def _build_spotlight_analysis(item: dict) -> dict:
